@@ -55,6 +55,7 @@ ALLOWED_DOCUMENT_HOSTS = frozenset({
     "mobile.twitter.com",
     "nitter.poast.org",
     "xcancel.com",
+    "rss.xcancel.com",
     "nitter.tiekoetter.com",
 })
 ALLOWED_MEDIA_HOSTS = frozenset({
@@ -604,13 +605,19 @@ def shrink_twimg(url: str) -> str:
 def parse_x_profile(html: str, account: dict) -> list[dict]:
     items = []
     seen = set()
-    for m in re.finditer(
-        r'<article[^>]*data-tweet-id="(\d+)"[^>]*>(.*?)</article>',
-        html,
-        re.I | re.S,
-    ):
-        tweet_id, inner = m.group(1), m.group(2)
-        if tweet_id in seen:
+    for m in re.finditer(r"<article\b([^>]*)>(.*?)</article>", html, re.I | re.S):
+        attrs, inner = m.group(1), m.group(2)
+        tweet_id = ""
+        id_attr = re.search(r'data-tweet-id="(\d+)"', attrs, re.I)
+        if id_attr:
+            tweet_id = id_attr.group(1)
+        if not tweet_id:
+            tweet_id = _itemprop(inner, "identifier")
+        if not tweet_id:
+            id_url = re.search(r'itemID="https://x\.com/(?:i|[^/]+)/status/(\d+)"', attrs, re.I)
+            if id_url:
+                tweet_id = id_url.group(1)
+        if not tweet_id.isdigit() or tweet_id in seen:
             continue
         seen.add(tweet_id)
         text = re.sub(r"\s+", " ", _itemprop(inner, "text")).strip()
@@ -619,8 +626,19 @@ def parse_x_profile(html: str, account: dict) -> list[dict]:
         url = "https://x.com/%s/status/%s" % (account["handle"], tweet_id)
         published = _itemprop(inner, "datePublished") or _itemprop(inner, "dateCreated")
         photos = []
-        for img in re.findall(r'src="(https://pbs\.twimg\.com/media/[^"]+)"', inner):
-            photos.append({"url": shrink_twimg(unescape(img)), "width": 16, "height": 9})
+        for img in re.finditer(
+            r'<img\b[^>]*src="(https://pbs\.twimg\.com/media/[^"]+)"[^>]*>',
+            inner,
+            re.I,
+        ):
+            href = shrink_twimg(unescape(img.group(1)))
+            w = re.search(r'\bwidth="(\d+)"', img.group(0))
+            h = re.search(r'\bheight="(\d+)"', img.group(0))
+            photos.append({
+                "url": href,
+                "width": int(w.group(1)) if w else 16,
+                "height": int(h.group(1)) if h else 9,
+            })
         items.append({
             "id": "%s:%s" % (account["id"], tweet_id),
             "tweetId": tweet_id,
