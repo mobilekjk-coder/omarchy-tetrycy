@@ -5,7 +5,7 @@
   "version": "0.3.4",
   "author": "Krzysztof Janusz Kowalczykowski",
   "license": "MIT",
-  "description": "Aggregator Tetrycy: YouTube, Forte, Betclic i X. Pigułka na pasku, pełny widok jako overlay.",
+  "description": "Tetrycy aggregator: YouTube, Forte, Betclic guest spots, and X. Bar pill plus overlay. Polish-only content.",
   "kinds": [
     "service",
     "bar-widget",
