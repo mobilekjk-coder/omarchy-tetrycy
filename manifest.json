@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "kjk.tetrycy",
+  "name": "Tetrycy",
+  "version": "0.3.4",
+  "author": "Krzysztof Janusz Kowalczykowski",
+  "license": "MIT",
+  "description": "Aggregator Tetrycy: YouTube, Forte, Betclic i X. Pigułka na pasku, pełny widok jako overlay.",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "overlay": "Overlay.qml"
+  },
+  "barWidget": {
+    "displayName": "Tetrycy",
+    "description": "Najnowsze filmy, na żywo i wpisy z X",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "refreshMinutes": 10,
+      "showShorts": true,
+      "notifyNew": true
+    },
+    "schema": [
+      {
+        "key": "refreshMinutes",
+        "type": "integer",
+        "label": "Odświeżanie (minuty)",
+        "min": 5,
+        "max": 120,
+        "step": 5,
+        "defaultValue": 10
+      },
+      {
+        "key": "showShorts",
+        "type": "boolean",
+        "label": "YouTube Shorts",
+        "defaultValue": true
+      },
+      {
+        "key": "notifyNew",
+        "type": "boolean",
+        "label": "Powiadom o nowym filmie",
+        "defaultValue": true
+      }
+    ]
+  }
+}
