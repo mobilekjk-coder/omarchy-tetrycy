@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import re
+import socket
 import sys
 import time
 import urllib.error
@@ -30,6 +32,40 @@ BROWSER_UA = (
 
 STATE_DIR = Path.home() / ".local" / "state" / "omarchy" / "kjk.tetrycy"
 MEDIA_DIR = STATE_DIR / "media"
+
+MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
+MAX_MEDIA_BYTES = 2 * 1024 * 1024
+MAX_CACHE_BYTES = 40 * 1024 * 1024
+MAX_CACHE_FILES = 400
+
+# Hosts we are willing to contact. Media URLs from third-party JSON/HTML are
+# still checked against this list before download or before they reach QML.
+ALLOWED_DOCUMENT_HOSTS = frozenset({
+    "www.youtube.com",
+    "youtube.com",
+    "m.youtube.com",
+    "i.ytimg.com",
+    "patronite.pl",
+    "www.patronite.pl",
+    "api.fxtwitter.com",
+    "fxtwitter.com",
+    "x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com",
+    "nitter.poast.org",
+    "xcancel.com",
+    "nitter.tiekoetter.com",
+})
+ALLOWED_MEDIA_HOSTS = frozenset({
+    "i.ytimg.com",
+    "ytimg.com",
+    "img.youtube.com",
+    "pbs.twimg.com",
+    "abs.twimg.com",
+    "ton.twimg.com",
+})
+ALLOWED_MEDIA_SUFFIXES = (".twimg.com", ".ytimg.com")
 
 ATOM = "{http://www.w3.org/2005/Atom}"
 YT = "{http://www.youtube.com/xml/schemas/2015}"
@@ -91,6 +127,95 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _is_blocked_ip(value: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(value)
+    except ValueError:
+        return True
+    return bool(
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
+def _host_allowed(host: str, media: bool) -> bool:
+    host = host.lower().rstrip(".")
+    if not host or host == "localhost":
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    if host in ALLOWED_DOCUMENT_HOSTS:
+        return True
+    if media and (host in ALLOWED_MEDIA_HOSTS or any(host.endswith(suf) for suf in ALLOWED_MEDIA_SUFFIXES)):
+        return True
+    return False
+
+
+def assert_fetch_url(url: str, media: bool = False) -> urllib.parse.ParseResult:
+    raw = (url or "").strip()
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("blocked scheme")
+    if parsed.username or parsed.password:
+        raise ValueError("blocked userinfo")
+    if parsed.port not in (None, 443):
+        raise ValueError("blocked port")
+    host = parsed.hostname or ""
+    if not _host_allowed(host, media=media):
+        raise ValueError("blocked host")
+    try:
+        infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("unresolved host") from exc
+    if not infos:
+        raise ValueError("unresolved host")
+    for info in infos:
+        if _is_blocked_ip(info[4][0]):
+            raise ValueError("blocked address")
+    return parsed
+
+
+def _read_limited(resp, limit: int) -> bytes:
+    length = resp.headers.get("Content-Length")
+    if length and str(length).isdigit() and int(length) > limit:
+        raise ValueError("response too large")
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = resp.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise ValueError("response too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+class GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, media: bool = False):
+        super().__init__()
+        self._media = media
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        assert_fetch_url(newurl, media=self._media)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_https(url: str, timeout: float, headers: dict, media: bool, limit: int):
+    assert_fetch_url(url, media=media)
+    req = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener(GuardedRedirectHandler(media=media))
+    return opener.open(req, timeout=timeout), limit
+
+
 def http_get(url: str, timeout: float = 8, browser: bool = False, headers: dict | None = None) -> tuple[str, str]:
     hdrs = {
         "User-Agent": BROWSER_UA if browser else UA,
@@ -99,33 +224,52 @@ def http_get(url: str, timeout: float = 8, browser: bool = False, headers: dict 
     }
     if headers:
         hdrs.update(headers)
-    req = urllib.request.Request(url, headers=hdrs)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.geturl(), resp.read().decode("utf-8", "replace")
+    resp, limit = _open_https(url, timeout, hdrs, media=False, limit=MAX_DOCUMENT_BYTES)
+    with resp:
+        body = _read_limited(resp, limit).decode("utf-8", "replace")
+        return resp.geturl(), body
+
+
+def _prune_media_cache() -> None:
+    if not MEDIA_DIR.is_dir():
+        return
+    files = [p for p in MEDIA_DIR.iterdir() if p.is_file()]
+    files.sort(key=lambda p: p.stat().st_mtime)
+    total = sum(p.stat().st_size for p in files)
+    while files and (total > MAX_CACHE_BYTES or len(files) > MAX_CACHE_FILES):
+        victim = files.pop(0)
+        try:
+            total -= victim.stat().st_size
+            victim.unlink()
+        except OSError:
+            pass
 
 
 def cache_media(url: str) -> str:
     href = (url or "").strip()
     if not href:
         return ""
-    if href.startswith("file:"):
-        return href
+    try:
+        assert_fetch_url(href, media=True)
+    except ValueError:
+        return ""
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha1(href.encode("utf-8", "replace")).hexdigest()[:20]
     path = MEDIA_DIR / (digest + ".jpg")
-    if path.is_file() and path.stat().st_size > 200:
+    if path.is_file() and 200 < path.stat().st_size <= MAX_MEDIA_BYTES:
         return path.as_uri()
     try:
         hdrs = {"User-Agent": BROWSER_UA, "Accept": "image/*,*/*"}
-        req = urllib.request.Request(href, headers=hdrs)
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            blob = resp.read()
-        if not blob:
-            return href
+        resp, limit = _open_https(href, 8, hdrs, media=True, limit=MAX_MEDIA_BYTES)
+        with resp:
+            blob = _read_limited(resp, limit)
+        if len(blob) < 200:
+            return ""
         path.write_bytes(blob)
+        _prune_media_cache()
         return path.as_uri()
     except Exception:
-        return href
+        return ""
 
 
 def localize_photos(photos: list) -> list:
@@ -276,14 +420,14 @@ def playlist_rss_url(playlist_id: str) -> str:
 
 def youtube_thumb(video_id: str) -> str:
     vid = (video_id or "").strip()
-    if not vid:
+    if not re.fullmatch(r"[\w-]{11}", vid):
         return ""
     return cache_media("https://i.ytimg.com/vi/%s/mqdefault.jpg" % vid)
 
 
 def item_from_yt(source_id: str, kind: str, raw: dict) -> dict:
     video_id = raw.get("videoId") or ""
-    thumb = youtube_thumb(video_id) or raw.get("thumb") or ""
+    thumb = youtube_thumb(video_id)
     return {
         "id": f"{source_id}:{video_id or raw.get('url')}",
         "videoId": video_id,
@@ -365,7 +509,7 @@ def check_live(spec: dict) -> dict | None:
         "url": "https://www.youtube.com/watch?v=" + video_id,
         "publishedMs": now_ms(),
         "author": spec["label"],
-        "thumb": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        "thumb": cache_media(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"),
         "views": 0,
         "excerpt": "",
         "live": is_live,
@@ -472,7 +616,7 @@ def parse_x_profile(html: str, account: dict) -> list[dict]:
         text = re.sub(r"\s+", " ", _itemprop(inner, "text")).strip()
         if not text:
             continue
-        url = _itemprop(inner, "url") or ("https://x.com/%s/status/%s" % (account["handle"], tweet_id))
+        url = "https://x.com/%s/status/%s" % (account["handle"], tweet_id)
         published = _itemprop(inner, "datePublished") or _itemprop(inner, "dateCreated")
         photos = []
         for img in re.findall(r'src="(https://pbs\.twimg\.com/media/[^"]+)"', inner):
@@ -548,7 +692,7 @@ def enrich_fx_tweet(item: dict, account: dict) -> dict:
     item.update({
         "title": text or item.get("title"),
         "excerpt": text or item.get("excerpt"),
-        "url": tweet.get("url") or item.get("url"),
+        "url": item.get("url") or ("https://x.com/%s/status/%s" % (account["handle"], tweet_id)),
         "author": author.get("name") or item.get("author"),
         "authorName": author.get("name") or item.get("authorName"),
         "handle": author.get("screen_name") or account["handle"],
