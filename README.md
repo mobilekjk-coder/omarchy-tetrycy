@@ -12,8 +12,6 @@ Unofficial. Not affiliated with Tetrycy.
 - **bar-widget** — a bar pill labelled TETRYCY (highlights when they are live)
 - **overlay** — videos on the left, X on the right
 
-Kind `panel` (OSD) is the wrong fit here — those are volume toasts, not a desk.
-
 ## Install
 
 Needs [Omarchy](https://omarchy.org/) with a running `omarchy-shell`, plus `python3` on `PATH` (already present on a normal Omarchy install).
