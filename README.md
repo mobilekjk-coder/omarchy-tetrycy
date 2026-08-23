@@ -1,16 +1,18 @@
 # Tetrycy — Omarchy plugin
 
-Aggregator [Tetrycy](https://www.youtube.com/@Tetrycy) na pulpicie: YouTube, Tetrycy Forte, gościnne odcinki Betclic i wpisy z X.
+Desktop aggregator for [Tetrycy](https://www.youtube.com/@Tetrycy): the main YouTube channel, [Tetrycy Forte](https://www.youtube.com/@TetrycyForte), guest appearances on Betclic Polska, and the commentators' personal X accounts.
 
 Plugin id: `kjk.tetrycy`
 
-- **service** — odświeża źródła w tle
-- **bar-widget** — pigułka na pasku z napisem TETRYCY (podświetla się przy NA ŻYWO)
-- **overlay** — filmy i X
+> **Polish only.** Every Tetrycy source this plugin surfaces is in Polish — videos, tweets, titles, and the overlay copy. There is no English UI or translation.
 
-Kind `panel` (OSD) tu nie pasuje — to toasty głośności, nie biurko.
+Unofficial. Not affiliated with Tetrycy.
 
-Nieoficjalne. Niezwiązane z Tetrycami.
+- **service** — refreshes sources in the background
+- **bar-widget** — a bar pill labelled TETRYCY (highlights when they are live)
+- **overlay** — videos on the left, X on the right
+
+Kind `panel` (OSD) is the wrong fit here — those are volume toasts, not a desk.
 
 ## Install
 
@@ -22,7 +24,7 @@ omarchy plugin add https://github.com/mobilekjk-coder/omarchy-tetrycy.git --enab
 
 That clones the plugin into `~/.config/omarchy/plugins/kjk.tetrycy/` and puts the widget on the center of the bar.
 
-Lewy klik otwiera overlay pod paskiem (pasek zostaje widoczny). Ponowny klik pigułki, **ZAMKNIJ**, klik poza kartą albo Esc zamyka. Środkowy odświeża. Prawy — powiadomienie o najnowszym filmie. **R** odświeża.
+Left click opens the overlay under the bar (the bar stays visible). Click the pill again, **ZAMKNIJ**, click outside the card, or press Esc to close. Middle click refreshes. Right click sends a desktop notification for the latest video. **R** refreshes while the overlay is open.
 
 Update later with:
 
@@ -38,34 +40,34 @@ omarchy plugin remove kjk.tetrycy
 
 That disables the widget and deletes the checkout. Cached data in `~/.local/state/omarchy/kjk.tetrycy/` is left behind; delete that directory if you want it gone too.
 
-## Źródła
+## Sources
 
-Bez kluczy API.
+No API keys.
 
-| Źródło | Jak |
+| Source | How |
 |---|---|
-| [Tetrycy](https://www.youtube.com/@Tetrycy) | Publiczny RSS YouTube |
-| [Tetrycy Forte](https://www.youtube.com/@TetrycyForte) | Publiczny RSS YouTube |
-| [Betclic x Tetrycy](https://www.youtube.com/playlist?list=PLtVXfLwhcMZLRH3LrqET_EdHU6HCnHOwX) | RSS playlisty |
-| Na żywo | `youtube.com/@handle/live` |
-| X · [Leszek](https://x.com/leszekmilewski), [Olki](https://x.com/JOlkiewicz) | Publiczne strony profili; zakładka X dzieli ekran na dwie kolumny |
-| [tetrycy.com.pl](https://www.tetrycy.com.pl/) | Link w stopce |
-| [Patronite](https://patronite.pl/tetrycy) | Liczba patronów |
+| [Tetrycy](https://www.youtube.com/@Tetrycy) | Public YouTube RSS |
+| [Tetrycy Forte](https://www.youtube.com/@TetrycyForte) | Public YouTube RSS |
+| [Betclic x Tetrycy](https://www.youtube.com/playlist?list=PLtVXfLwhcMZLRH3LrqET_EdHU6HCnHOwX) | Playlist RSS |
+| Live | `youtube.com/@handle/live` |
+| X · [Leszek](https://x.com/leszekmilewski), [Olki](https://x.com/JOlkiewicz) | Public profile pages; the X tab splits the screen into two columns |
+| [tetrycy.com.pl](https://www.tetrycy.com.pl/) | Footer link |
+| [Patronite](https://patronite.pl/tetrycy) | Patron count |
 
 ## Settings
 
+Set these on the bar entry (Setup, or `omarchy bar set`):
+
 | Key | Default | Meaning |
 |---|---|---|
-| `refreshMinutes` | `10` | Jak często ściągać. Na żywo częściej |
-| `showShorts` | `true` | YouTube Shorts |
-| `notifyNew` | `true` | Powiadomienie o nowym filmie |
+| `refreshMinutes` | `10` | How often to refetch. Live checks run more often |
+| `showShorts` | `true` | Include YouTube Shorts |
+| `notifyNew` | `true` | Notify when a new video appears |
 
 ```bash
 omarchy bar set kjk.tetrycy refreshMinutes 15
 omarchy bar set kjk.tetrycy showShorts false
 ```
-
-Source: [github.com/mobilekjk-coder/omarchy-tetrycy](https://github.com/mobilekjk-coder/omarchy-tetrycy)
 
 ## License
 
