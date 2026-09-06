@@ -602,9 +602,36 @@ def shrink_twimg(url: str) -> str:
     return href
 
 
+def _tweet_stub(account: dict, tweet_id: str, text: str = "", published: str = "", photos: list | None = None) -> dict:
+    photos = photos or []
+    return {
+        "id": "%s:%s" % (account["id"], tweet_id),
+        "tweetId": tweet_id,
+        "source": account["id"],
+        "kind": "post",
+        "title": text,
+        "url": "https://x.com/%s/status/%s" % (account["handle"], tweet_id),
+        "publishedMs": parse_time(published),
+        "author": account["label"],
+        "authorName": account["label"],
+        "handle": account["handle"],
+        "avatar": "",
+        "photos": photos,
+        "thumb": (photos[0]["url"] if photos else ""),
+        "likes": 0,
+        "retweets": 0,
+        "replies": 0,
+        "views": 0,
+        "excerpt": text,
+        "live": False,
+    }
+
+
 def parse_x_profile(html: str, account: dict) -> list[dict]:
     items = []
     seen = set()
+    handle = re.escape(account["handle"])
+
     for m in re.finditer(r"<article\b([^>]*)>(.*?)</article>", html, re.I | re.S):
         attrs, inner = m.group(1), m.group(2)
         tweet_id = ""
@@ -617,13 +644,14 @@ def parse_x_profile(html: str, account: dict) -> list[dict]:
             id_url = re.search(r'itemID="https://x\.com/(?:i|[^/]+)/status/(\d+)"', attrs, re.I)
             if id_url:
                 tweet_id = id_url.group(1)
+        if not tweet_id:
+            href_id = re.search(r'href="/(?:i|%s)/status/(\d+)"' % handle, inner, re.I)
+            if href_id:
+                tweet_id = href_id.group(1)
         if not tweet_id.isdigit() or tweet_id in seen:
             continue
         seen.add(tweet_id)
         text = re.sub(r"\s+", " ", _itemprop(inner, "text")).strip()
-        if not text:
-            continue
-        url = "https://x.com/%s/status/%s" % (account["handle"], tweet_id)
         published = _itemprop(inner, "datePublished") or _itemprop(inner, "dateCreated")
         photos = []
         for img in re.finditer(
@@ -639,27 +667,15 @@ def parse_x_profile(html: str, account: dict) -> list[dict]:
                 "width": int(w.group(1)) if w else 16,
                 "height": int(h.group(1)) if h else 9,
             })
-        items.append({
-            "id": "%s:%s" % (account["id"], tweet_id),
-            "tweetId": tweet_id,
-            "source": account["id"],
-            "kind": "post",
-            "title": text,
-            "url": url,
-            "publishedMs": parse_time(published),
-            "author": account["label"],
-            "authorName": account["label"],
-            "handle": account["handle"],
-            "avatar": "",
-            "photos": photos,
-            "thumb": (photos[0]["url"] if photos else ""),
-            "likes": 0,
-            "retweets": 0,
-            "replies": 0,
-            "views": 0,
-            "excerpt": text,
-            "live": False,
-        })
+        items.append(_tweet_stub(account, tweet_id, text, published, photos))
+
+    # Current x.com profile HTML dropped schema.org cards; tweet ids still
+    # appear as /handle/status/<id> links. Stubs are filled by FixTweet.
+    for tweet_id in re.findall(r'href="/(?:i|%s)/status/(\d+)"' % handle, html, re.I):
+        if tweet_id in seen:
+            continue
+        seen.add(tweet_id)
+        items.append(_tweet_stub(account, tweet_id))
     return items
 
 
@@ -739,7 +755,8 @@ def fetch_x_tweets(account: dict) -> list[dict]:
     if not items:
         return fetch_nitter_rss(account)
     with ThreadPoolExecutor(max_workers=6) as pool:
-        return list(pool.map(lambda item: enrich_fx_tweet(item, account), items))
+        enriched = list(pool.map(lambda item: enrich_fx_tweet(item, account), items))
+    return [item for item in enriched if item.get("title") or item.get("excerpt")]
 
 
 def fetch_nitter_rss(account: dict) -> list[dict]:
