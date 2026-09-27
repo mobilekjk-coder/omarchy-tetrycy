@@ -106,6 +106,14 @@ GUESTS = {
     },
 }
 
+# Lives and one-off appearances on Betclic Polska are not in the collab playlist.
+BETCLIC_CHANNEL = {
+    "id": "betclic",
+    "label": "Betclic",
+    "channel_id": "UCeNovQsDPbkFAIOffw68ghw",
+    "url": "https://www.youtube.com/@BetclicPolska",
+}
+
 X_ACCOUNTS = [
     {"id": "x-leszek", "label": "Leszek Milewski", "handle": "leszekmilewski"},
     {"id": "x-kuba", "label": "Jakub Olkiewicz", "handle": "JOlkiewicz"},
@@ -741,7 +749,7 @@ def item_from_yt(source_id: str, kind: str, raw: dict) -> dict | None:
 def _yt_from_browse(browse_id: str, params: str = "", short: bool = False) -> list[dict]:
     if not re.fullmatch(r"UC[\w-]{22}|VLPL[\w-]{10,}", browse_id):
         return []
-    if params and not re.fullmatch(r"[A-Za-z0-9_\-]{0,80}", params):
+    if params and not re.fullmatch(r"[A-Za-z0-9_\-=]{1,80}", params):
         return []
     try:
         data = youtube_browse(browse_id, params)
@@ -784,30 +792,73 @@ def fetch_guest_playlist(spec: dict) -> tuple[str, dict]:
     return spec["id"], {"ok": True, "items": items, "url": spec["url"]}
 
 
+def _mentions_tetrycy(title: str) -> bool:
+    folded = (title or "").lower().replace("ł", "l")
+    return "tetry" in folded
+
+
+def _live_from_entry(entry: dict, spec: dict) -> dict | None:
+    badge = (entry.get("liveBadge") or "").lower()
+    is_live = "na żywo" in badge
+    is_upcoming = "wkrótce" in badge or "upcoming" in badge
+    if not is_live and not is_upcoming:
+        return None
+    video_id = entry["videoId"]
+    return {
+        "id": f"live:{spec['id']}:{video_id}",
+        "source": spec["id"],
+        "kind": "live" if is_live else "upcoming",
+        "title": entry["title"],
+        "url": "https://www.youtube.com/watch?v=" + video_id,
+        "publishedMs": entry.get("publishedMs") or now_ms(),
+        "author": spec["label"],
+        "thumb": "",
+        "views": entry.get("views") or 0,
+        "excerpt": "",
+        "live": is_live,
+        "videoId": video_id,
+    }
+
+
+def fetch_betclic_appearances() -> tuple[str, dict]:
+    """Recent Betclic Polska uploads and streams that name Tetrycy."""
+    picked = []
+    seen = set()
+    for params in (YT_LIVE_PARAMS, YT_VIDEOS_PARAMS):
+        for entry in _yt_from_browse(BETCLIC_CHANNEL["channel_id"], params):
+            if entry["videoId"] in seen or not _mentions_tetrycy(entry["title"]):
+                continue
+            seen.add(entry["videoId"])
+            picked.append(entry)
+            if len(picked) >= 8:
+                break
+        if len(picked) >= 8:
+            break
+    items = []
+    live = []
+    for entry in picked:
+        special = _live_from_entry(entry, BETCLIC_CHANNEL)
+        if special:
+            special["thumb"] = cache_media("https://i.ytimg.com/vi/%s/mqdefault.jpg" % special["videoId"])
+            live.append(special)
+            items.append(special)
+            continue
+        item = item_from_yt("betclic", "guest", entry)
+        if item:
+            items.append(item)
+    return "betclic-channel", {"ok": bool(items), "items": items, "live": live, "error": "" if items else "no videos"}
+
+
 def check_live(spec: dict) -> dict | None:
     channel_id = spec.get("channel_id")
     if not channel_id:
         return None
     for entry in _yt_from_browse(channel_id, YT_LIVE_PARAMS):
-        badge = entry.get("liveBadge") or ""
-        is_live = "na żywo" in badge or "live" in badge
-        is_upcoming = "wkrótce" in badge or "upcoming" in badge
-        if not is_live and not is_upcoming:
+        found = _live_from_entry(entry, spec)
+        if not found:
             continue
-        video_id = entry["videoId"]
-        return {
-            "id": f"live:{spec['id']}:{video_id}",
-            "source": spec["id"],
-            "kind": "live" if is_live else "upcoming",
-            "title": entry["title"],
-            "url": entry["url"],
-            "publishedMs": entry.get("publishedMs") or now_ms(),
-            "author": spec["label"],
-            "thumb": cache_media(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"),
-            "views": entry.get("views") or 0,
-            "excerpt": "",
-            "live": is_live,
-        }
+        found["thumb"] = cache_media("https://i.ytimg.com/vi/%s/mqdefault.jpg" % found["videoId"])
+        return found
     return None
 
 
@@ -1102,6 +1153,7 @@ def build_bundle() -> dict:
             futures[pool.submit(check_live, spec)] = ("live", spec["id"])
         for spec in GUESTS.values():
             futures[pool.submit(fetch_guest_playlist, spec)] = ("guest", spec["id"])
+        futures[pool.submit(fetch_betclic_appearances)] = ("betclic-channel", "betclic-channel")
         futures[pool.submit(fetch_patronite)] = ("patronite", "patronite")
         for account in X_ACCOUNTS:
             futures[pool.submit(fetch_fxtwitter, account)] = ("x-profile", account["id"])
@@ -1120,6 +1172,12 @@ def build_bundle() -> dict:
                 if not payload.get("ok"):
                     errors[source_id] = payload.get("error") or "fail"
                 items.extend(payload.get("items") or [])
+            elif kind == "betclic-channel":
+                _sid, payload = result
+                if not payload.get("ok"):
+                    errors["betclic-channel"] = payload.get("error") or "fail"
+                items.extend(payload.get("items") or [])
+                live.extend(payload.get("live") or [])
             elif kind == "live":
                 if result:
                     live.append(result)

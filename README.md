@@ -46,7 +46,7 @@ No API keys. Cache files under `~/.local/state/omarchy/kjk.tetrycy/` are created
 |---|---|
 | [Tetrycy](https://www.youtube.com/@Tetrycy) | YouTube's public channel browse (RSS is only a fallback; YouTube currently answers it with 404/500) |
 | [Tetrycy Forte](https://www.youtube.com/@TetrycyForte) | Public YouTube RSS |
-| [Betclic x Tetrycy](https://www.youtube.com/playlist?list=PLtVXfLwhcMZLRH3LrqET_EdHU6HCnHOwX) | Playlist RSS |
+| [Betclic x Tetrycy](https://www.youtube.com/playlist?list=PLtVXfLwhcMZLRH3LrqET_EdHU6HCnHOwX) | Collab playlist, plus recent [Betclic Polska](https://www.youtube.com/@BetclicPolska) streams whose titles name Tetrycy |
 | Live | `youtube.com/@handle/live` |
 | X · [Leszek](https://x.com/leszekmilewski), [Olki](https://x.com/JOlkiewicz) | Public profile pages; the X tab splits the screen into two columns |
 | [tetrycy.com.pl](https://www.tetrycy.com.pl/) | Footer link |
