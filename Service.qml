@@ -20,8 +20,28 @@ Item {
     var url = String(Qt.resolvedUrl("."))
     return url.replace(/^file:\/\//, "").replace(/\/$/, "")
   }
-  readonly property string cachePath: Quickshell.env("HOME") + "/.local/state/omarchy/kjk.tetrycy/cache.json"
-  readonly property string seenPath: Quickshell.env("HOME") + "/.local/state/omarchy/kjk.tetrycy/seen.json"
+  property bool stateReady: false
+  property string cachePath: ""
+  property string seenPath: ""
+  property string pendingCache: ""
+  property string pendingSeen: ""
+
+  function stateRoot() {
+    return Quickshell.env("HOME") + "/.local/state/omarchy/kjk.tetrycy"
+  }
+
+  function writeState(kind, body) {
+    if (!root.stateReady) return
+    if (kind === "seen") {
+      root.pendingSeen = body
+      writeSeenProc.command = ["python3", root.pluginDir + "/fetch.py", "--write-state", "seen"]
+      if (!writeSeenProc.running) writeSeenProc.running = true
+    } else {
+      root.pendingCache = body
+      writeCacheProc.command = ["python3", root.pluginDir + "/fetch.py", "--write-state", "cache"]
+      if (!writeCacheProc.running) writeCacheProc.running = true
+    }
+  }
   readonly property var nowMs: clock.date.getTime()
   readonly property var live: Model.liveNow(snapshot)
   readonly property bool hasLive: !!live
@@ -34,7 +54,7 @@ Item {
     if (parsed.ok) {
       maybeNotify(parsed)
       root.snapshot = parsed
-      cacheFile.setText(JSON.stringify(parsed) + "\n")
+      root.writeState("cache", JSON.stringify(parsed) + "\n")
       seedSeen(parsed)
     } else if (!root.snapshot.ok) {
       root.snapshot = parsed
@@ -52,7 +72,7 @@ Item {
     if (root.seenCount() > 0) return
     var nextSeen = Model.collectSeen(parsed || root.snapshot)
     root.seenIds = nextSeen
-    seenFile.setText(JSON.stringify(nextSeen) + "\n")
+    root.writeState("seen", JSON.stringify(nextSeen) + "\n")
   }
 
   function maybeNotify(parsed) {
@@ -61,7 +81,7 @@ Item {
     var fresh = Model.newItems(parsed, root.seenIds, root.showShorts)
     var nextSeen = Model.collectSeen(parsed)
     root.seenIds = nextSeen
-    seenFile.setText(JSON.stringify(nextSeen) + "\n")
+    root.writeState("seen", JSON.stringify(nextSeen) + "\n")
     if (!fresh.length) return
     notifyItem(fresh[0])
   }
@@ -94,6 +114,7 @@ Item {
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
+      if (!root.cachePath) return
       var cached = Model.parseCache(text(), Date.now())
       if (cached.ok) root.snapshot = cached
     }
@@ -121,8 +142,32 @@ Item {
   }
 
   Process {
-    id: mkdirProc
-    command: ["mkdir", "-p", Quickshell.env("HOME") + "/.local/state/omarchy/kjk.tetrycy"]
+    id: prepareProc
+    command: ["python3", root.pluginDir + "/fetch.py", "--prepare-state"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      root.cachePath = root.stateRoot() + "/cache.json"
+      root.seenPath = root.stateRoot() + "/seen.json"
+      root.stateReady = true
+      Qt.callLater(function() {
+        cacheFile.reload()
+        seenFile.reload()
+        if (root.snapshot && root.snapshot.ok)
+          root.writeState("cache", JSON.stringify(root.snapshot) + "\n")
+      })
+    }
+  }
+
+  Process {
+    id: writeCacheProc
+    stdinEnabled: true
+    onStarted: write(root.pendingCache)
+  }
+
+  Process {
+    id: writeSeenProc
+    stdinEnabled: true
+    onStarted: write(root.pendingSeen)
   }
 
   Process {
@@ -161,11 +206,5 @@ Item {
     }
   }
 
-  Component.onCompleted: {
-    mkdirProc.running = true
-    Qt.callLater(function() {
-      cacheFile.reload()
-      seenFile.reload()
-    })
-  }
+  Component.onCompleted: prepareProc.running = true
 }

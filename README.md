@@ -40,7 +40,7 @@ That disables the widget and deletes the checkout. Cached data in `~/.local/stat
 
 ## Sources
 
-No API keys.
+No API keys. Cache files under `~/.local/state/omarchy/kjk.tetrycy/` are created only when that directory and its files are real directories and regular files. A symlink in that chain is refused, so a cache write cannot be redirected elsewhere.
 
 | Source | How |
 |---|---|

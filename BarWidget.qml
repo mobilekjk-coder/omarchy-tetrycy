@@ -63,12 +63,24 @@ BarWidget {
     precision: SystemClock.Minutes
   }
 
+  property string cachePath: ""
+
+  Process {
+    command: ["python3", String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "") + "/fetch.py", "--prepare-state"]
+    running: true
+    onExited: function(exitCode) {
+      if (exitCode === 0)
+        root.cachePath = Quickshell.env("HOME") + "/.local/state/omarchy/kjk.tetrycy/cache.json"
+    }
+  }
+
   FileView {
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/kjk.tetrycy/cache.json"
+    path: root.cachePath
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
+      if (!root.cachePath) return
       var cached = Model.parseCache(text(), Date.now())
       if (cached.ok) root.snapshot = cached
     }

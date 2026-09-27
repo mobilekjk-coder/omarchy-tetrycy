@@ -10,8 +10,10 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import socket
+import stat
 import sys
 import time
 import urllib.error
@@ -37,6 +39,8 @@ MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 MAX_MEDIA_BYTES = 2 * 1024 * 1024
 MAX_CACHE_BYTES = 40 * 1024 * 1024
 MAX_CACHE_FILES = 400
+MAX_STATE_FILE_BYTES = 8 * 1024 * 1024
+MEDIA_NAME = re.compile(r"[0-9a-f]{20}\.jpg")
 
 # Hosts we are willing to contact. Media URLs from third-party JSON/HTML are
 # still checked against this list before download or before they reach QML.
@@ -126,6 +130,80 @@ LINKS = [
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _is_symlink(path: Path) -> bool:
+    try:
+        return stat.S_ISLNK(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def _ensure_dir_nofollow(path: Path, anchor: Path) -> None:
+    """Create path under anchor. Refuse if any component from anchor down is a symlink."""
+    path = path.expanduser()
+    anchor = anchor.expanduser()
+    if not path.is_absolute() or not anchor.is_absolute():
+        raise OSError("state path must be absolute")
+    try:
+        rel = path.relative_to(anchor)
+    except ValueError as exc:
+        raise OSError("state path escapes home") from exc
+    current = anchor
+    for part in rel.parts:
+        if part in ("", ".", ".."):
+            raise OSError("bad state path")
+        current = current / part
+        if _is_symlink(current):
+            raise OSError("refusing symlinked state path")
+        if not os.path.lexists(current):
+            os.mkdir(current, 0o700)
+            continue
+        mode = os.lstat(current).st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise OSError("state path is not a directory")
+
+
+def _assert_regular_or_absent(path: Path) -> None:
+    if not os.path.lexists(path):
+        return
+    mode = os.lstat(path).st_mode
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise OSError("refusing non-regular state file")
+
+
+def ensure_state_tree() -> Path:
+    root = STATE_DIR
+    _ensure_dir_nofollow(root, Path.home())
+    _ensure_dir_nofollow(MEDIA_DIR, Path.home())
+    _assert_regular_or_absent(root / "cache.json")
+    _assert_regular_or_absent(root / "seen.json")
+    return root
+
+
+def write_nofollow(path: Path, data: bytes) -> None:
+    if _is_symlink(path.parent) or _is_symlink(path):
+        raise OSError("refusing symlink")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("refusing non-regular state file")
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+    finally:
+        os.close(fd)
+
+
+def write_state_file(kind: str, payload: bytes) -> None:
+    if kind not in ("cache", "seen"):
+        raise OSError("unknown state file")
+    if len(payload) > MAX_STATE_FILE_BYTES:
+        raise OSError("state file too large")
+    root = ensure_state_tree()
+    write_nofollow(root / (kind + ".json"), payload)
 
 
 def _is_blocked_ip(value: str) -> bool:
@@ -232,16 +310,36 @@ def http_get(url: str, timeout: float = 8, browser: bool = False, headers: dict 
 
 
 def _prune_media_cache() -> None:
-    if not MEDIA_DIR.is_dir():
+    try:
+        ensure_state_tree()
+    except OSError:
         return
-    files = [p for p in MEDIA_DIR.iterdir() if p.is_file()]
-    files.sort(key=lambda p: p.stat().st_mtime)
-    total = sum(p.stat().st_size for p in files)
-    while files and (total > MAX_CACHE_BYTES or len(files) > MAX_CACHE_FILES):
-        victim = files.pop(0)
+    files = []
+    try:
+        names = os.listdir(MEDIA_DIR)
+    except OSError:
+        return
+    for name in names:
+        if not MEDIA_NAME.fullmatch(name):
+            continue
+        path = MEDIA_DIR / name
         try:
-            total -= victim.stat().st_size
-            victim.unlink()
+            st = os.lstat(path)
+        except OSError:
+            continue
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            continue
+        files.append((st.st_mtime, st.st_size, path))
+    files.sort()
+    total = sum(size for _, size, _ in files)
+    while files and (total > MAX_CACHE_BYTES or len(files) > MAX_CACHE_FILES):
+        _, size, victim = files.pop(0)
+        try:
+            st = os.lstat(victim)
+            if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+                continue
+            os.unlink(victim)
+            total -= size
         except OSError:
             pass
 
@@ -252,13 +350,19 @@ def cache_media(url: str) -> str:
         return ""
     try:
         assert_fetch_url(href, media=True)
-    except ValueError:
+        ensure_state_tree()
+    except (ValueError, OSError):
         return ""
-    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha1(href.encode("utf-8", "replace")).hexdigest()[:20]
     path = MEDIA_DIR / (digest + ".jpg")
-    if path.is_file() and 200 < path.stat().st_size <= MAX_MEDIA_BYTES:
-        return path.as_uri()
+    try:
+        st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode) and not stat.S_ISLNK(st.st_mode) and 200 < st.st_size <= MAX_MEDIA_BYTES:
+            return path.as_uri()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return ""
     try:
         hdrs = {"User-Agent": BROWSER_UA, "Accept": "image/*,*/*"}
         resp, limit = _open_https(href, 8, hdrs, media=True, limit=MAX_MEDIA_BYTES)
@@ -266,7 +370,7 @@ def cache_media(url: str) -> str:
             blob = _read_limited(resp, limit)
         if len(blob) < 200:
             return ""
-        path.write_bytes(blob)
+        write_nofollow(path, blob)
         _prune_media_cache()
         return path.as_uri()
     except Exception:
@@ -861,7 +965,18 @@ def build_bundle() -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--prepare-state", action="store_true")
+    parser.add_argument("--write-state", choices=["cache", "seen"])
     args = parser.parse_args()
+    if args.prepare_state or args.write_state:
+        try:
+            if args.write_state:
+                write_state_file(args.write_state, sys.stdin.buffer.read())
+            else:
+                ensure_state_tree()
+        except OSError:
+            return 2
+        return 0
     try:
         bundle = build_bundle()
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, RuntimeError) as exc:
