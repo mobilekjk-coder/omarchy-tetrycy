@@ -620,7 +620,7 @@ def _polish_views(text: str) -> int:
     return int(number * scale)
 
 
-def _polish_time_ms(text: str) -> int:
+def _polish_time_ms(text: str, now: int | None = None) -> int:
     raw = (text or "").replace("\xa0", " ").lower()
     raw = raw.replace("transmisja odbyła się", "").strip()
     dated = re.search(r"(\d{1,2})\.(\d{1,2})\.(\d{4})(?:,\s*(\d{1,2}):(\d{2}))?", raw)
@@ -654,7 +654,7 @@ def _polish_time_ms(text: str) -> int:
         seconds = count * 30 * 86400
     elif unit in ("rok", "lata", "lat"):
         seconds = count * 365 * 86400
-    return now_ms() - seconds * 1000
+    return (now if now is not None else now_ms()) - seconds * 1000
 
 
 def _duration_seconds(text: str) -> int:
@@ -670,6 +670,7 @@ def _duration_seconds(text: str) -> int:
 def parse_lockups(data: dict, short: bool = False) -> list[dict]:
     entries = []
     seen = set()
+    now = now_ms()
     for lockup in _walk_lockups(data):
         if lockup.get("contentType") not in (None, "LOCKUP_CONTENT_TYPE_VIDEO"):
             continue
@@ -689,8 +690,8 @@ def parse_lockups(data: dict, short: bool = False) -> list[dict]:
         for part in parts:
             if _polish_views(part):
                 views = _polish_views(part)
-            elif _polish_time_ms(part):
-                published = _polish_time_ms(part)
+            elif _polish_time_ms(part, now):
+                published = _polish_time_ms(part, now)
             elif not author:
                 author = part
         duration = _duration_seconds(badges[0] if badges else "")
