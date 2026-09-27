@@ -76,8 +76,27 @@ Item {
   }
 
   function openUrl(url) {
-    if (!url) return
-    Qt.openUrlExternally(url)
+    var target = String(url || "")
+    var match = target.match(/^https:\/\/([^\/:?#]+)([\/?#]|$)/)
+    if (!match) return
+    var host = match[1].toLowerCase()
+    var allowed = {
+      "www.youtube.com": true,
+      "youtube.com": true,
+      "m.youtube.com": true,
+      "youtu.be": true,
+      "x.com": true,
+      "twitter.com": true,
+      "www.twitter.com": true,
+      "mobile.twitter.com": true,
+      "www.tetrycy.com.pl": true,
+      "tetrycy.com.pl": true,
+      "patronite.pl": true,
+      "www.patronite.pl": true,
+      "discord.gg": true
+    }
+    if (!allowed[host]) return
+    Qt.openUrlExternally(target)
   }
 
   SystemClock {

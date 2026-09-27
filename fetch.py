@@ -556,18 +556,20 @@ def youtube_browse(browse_id: str, params: str = "") -> dict:
 def _walk_lockups(node) -> list:
     found = []
 
-    def walk(obj):
+    def walk(obj, depth: int):
+        if depth > 40:
+            return
         if isinstance(obj, dict):
             lockup = obj.get("lockupViewModel")
             if isinstance(lockup, dict) and lockup.get("contentId"):
                 found.append(lockup)
             for value in obj.values():
-                walk(value)
+                walk(value, depth + 1)
         elif isinstance(obj, list):
             for value in obj:
-                walk(value)
+                walk(value, depth + 1)
 
-    walk(node)
+    walk(node, 0)
     return found
 
 
@@ -715,19 +717,20 @@ def youtube_thumb(video_id: str) -> str:
     return cache_media("https://i.ytimg.com/vi/%s/mqdefault.jpg" % vid)
 
 
-def item_from_yt(source_id: str, kind: str, raw: dict) -> dict:
-    video_id = raw.get("videoId") or ""
-    thumb = youtube_thumb(video_id)
+def item_from_yt(source_id: str, kind: str, raw: dict) -> dict | None:
+    video_id = str(raw.get("videoId") or "")
+    if not re.fullmatch(r"[\w-]{11}", video_id):
+        return None
     return {
-        "id": f"{source_id}:{video_id or raw.get('url')}",
+        "id": f"{source_id}:{video_id}",
         "videoId": video_id,
         "source": source_id,
         "kind": "short" if raw.get("short") else kind,
         "title": raw.get("title") or "",
-        "url": raw.get("url") or "",
+        "url": "https://www.youtube.com/watch?v=" + video_id,
         "publishedMs": raw.get("publishedMs") or 0,
         "author": raw.get("author") or "",
-        "thumb": thumb,
+        "thumb": youtube_thumb(video_id),
         "views": raw.get("views") or 0,
         "excerpt": raw.get("excerpt") or "",
         "live": False,
@@ -735,6 +738,10 @@ def item_from_yt(source_id: str, kind: str, raw: dict) -> dict:
 
 
 def _yt_from_browse(browse_id: str, params: str = "", short: bool = False) -> list[dict]:
+    if not re.fullmatch(r"UC[\w-]{22}|VLPL[\w-]{10,}", browse_id):
+        return []
+    if params and not re.fullmatch(r"[A-Za-z0-9_\-]{0,80}", params):
+        return []
     try:
         data = youtube_browse(browse_id, params)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
@@ -753,7 +760,9 @@ def fetch_youtube_channel(spec: dict) -> tuple[str, dict]:
                 entries = []
     if not entries:
         return spec["id"], {"ok": False, "error": "no videos", "items": []}
-    items = [item_from_yt(spec["id"], "video", entry) for entry in entries]
+    items = [item for item in (item_from_yt(spec["id"], "video", entry) for entry in entries) if item]
+    if not items:
+        return spec["id"], {"ok": False, "error": "no videos", "items": []}
     return spec["id"], {"ok": True, "items": items, "url": spec["url"]}
 
 
@@ -768,7 +777,9 @@ def fetch_guest_playlist(spec: dict) -> tuple[str, dict]:
                 entries = []
     if not entries:
         return spec["id"], {"ok": False, "error": "no videos", "items": []}
-    items = [item_from_yt(spec["id"], "guest", entry) for entry in entries]
+    items = [item for item in (item_from_yt(spec["id"], "guest", entry) for entry in entries) if item]
+    if not items:
+        return spec["id"], {"ok": False, "error": "no videos", "items": []}
     return spec["id"], {"ok": True, "items": items, "url": spec["url"]}
 
 

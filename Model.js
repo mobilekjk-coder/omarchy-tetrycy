@@ -135,8 +135,11 @@ function formatViews(value) {
 
 function youtubeThumb(item) {
   if (!item) return ""
-  if (item.thumb) return String(item.thumb)
-  if (item.videoId) return "https://i.ytimg.com/vi/" + item.videoId + "/mqdefault.jpg"
+  var thumb = String(item.thumb || "")
+  if (thumb.indexOf("..") === -1 && /^file:\/\/\/.*\/\.local\/state\/omarchy\/kjk\.tetrycy\/media\/[0-9a-f]{20}\.jpg$/.test(thumb))
+    return thumb
+  var id = String(item.videoId || "")
+  if (/^[\w-]{11}$/.test(id)) return "https://i.ytimg.com/vi/" + id + "/mqdefault.jpg"
   return ""
 }
 
