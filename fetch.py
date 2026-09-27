@@ -523,6 +523,191 @@ def playlist_rss_url(playlist_id: str) -> str:
     return "https://www.youtube.com/feeds/videos.xml?playlist_id=" + playlist_id
 
 
+YT_BROWSE = "https://www.youtube.com/youtubei/v1/browse?prettyPrint=false"
+YT_VIDEOS_PARAMS = "EgZ2aWRlb3PyBgQKAjoA"
+YT_LIVE_PARAMS = "EgdzdHJlYW1z8gYECgJ6AA=="
+YT_CLIENT = {"clientName": "WEB", "clientVersion": "2.20250920.01.00", "hl": "pl", "gl": "PL"}
+
+
+def http_post_json(url: str, payload: dict, timeout: float = 12) -> dict:
+    assert_fetch_url(url, media=False)
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "User-Agent": BROWSER_UA,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    opener = urllib.request.build_opener(GuardedRedirectHandler(media=False))
+    with opener.open(req, timeout=timeout) as resp:
+        body = _read_limited(resp, MAX_DOCUMENT_BYTES)
+    return json.loads(body.decode("utf-8", "replace"))
+
+
+def youtube_browse(browse_id: str, params: str = "") -> dict:
+    body = {"context": {"client": YT_CLIENT}, "browseId": browse_id}
+    if params:
+        body["params"] = params
+    return http_post_json(YT_BROWSE, body)
+
+
+def _walk_lockups(node) -> list:
+    found = []
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            lockup = obj.get("lockupViewModel")
+            if isinstance(lockup, dict) and lockup.get("contentId"):
+                found.append(lockup)
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+
+    walk(node)
+    return found
+
+
+def _badge_texts(lockup: dict) -> list[str]:
+    texts = []
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            badge = obj.get("thumbnailBadgeViewModel")
+            if isinstance(badge, dict) and badge.get("text"):
+                texts.append(str(badge["text"]))
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+
+    walk(lockup.get("contentImage") or {})
+    return texts
+
+
+def _meta_parts(lockup: dict) -> list[str]:
+    meta = ((lockup.get("metadata") or {}).get("lockupMetadataViewModel") or {})
+    rows = (((meta.get("metadata") or {}).get("contentMetadataViewModel") or {}).get("metadataRows") or [])
+    parts = []
+    for row in rows:
+        for part in row.get("metadataParts") or []:
+            text = ((part.get("text") or {}).get("content") or "").strip()
+            if text:
+                parts.append(text)
+    return parts
+
+
+def _polish_views(text: str) -> int:
+    raw = (text or "").replace("\xa0", " ").lower()
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(tysi[aą]ce|tys|mln|mld)?", raw)
+    if not match or "wyświetl" not in raw:
+        return 0
+    number = float(match.group(1).replace(",", "."))
+    unit = match.group(2) or ""
+    scale = 1
+    if unit.startswith("tys"):
+        scale = 1000
+    elif unit == "mln":
+        scale = 1000000
+    elif unit == "mld":
+        scale = 1000000000
+    return int(number * scale)
+
+
+def _polish_time_ms(text: str) -> int:
+    raw = (text or "").replace("\xa0", " ").lower()
+    raw = raw.replace("transmisja odbyła się", "").strip()
+    dated = re.search(r"(\d{1,2})\.(\d{1,2})\.(\d{4})(?:,\s*(\d{1,2}):(\d{2}))?", raw)
+    if dated:
+        day, month, year = int(dated.group(1)), int(dated.group(2)), int(dated.group(3))
+        hour = int(dated.group(4) or 0)
+        minute = int(dated.group(5) or 0)
+        try:
+            when = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+        except ValueError:
+            return 0
+        return int(when.timestamp() * 1000)
+    match = re.search(
+        r"(\d+)\s*(sekund|minut|godzin|dzień|dzien|dni|tydzień|tydzien|tygodnie|tygodni|miesiąc|miesiac|miesiące|miesiace|miesięcy|miesiecy|rok|lata|lat)\b",
+        raw,
+    )
+    if not match:
+        return 0
+    count = int(match.group(1))
+    unit = match.group(2)
+    seconds = count
+    if unit.startswith("minut"):
+        seconds = count * 60
+    elif unit.startswith("godzin"):
+        seconds = count * 3600
+    elif unit.startswith("dzie") or unit == "dni":
+        seconds = count * 86400
+    elif unit.startswith("tydz"):
+        seconds = count * 7 * 86400
+    elif unit.startswith("mies"):
+        seconds = count * 30 * 86400
+    elif unit in ("rok", "lata", "lat"):
+        seconds = count * 365 * 86400
+    return now_ms() - seconds * 1000
+
+
+def _duration_seconds(text: str) -> int:
+    parts = [int(piece) for piece in re.findall(r"\d+", text or "")]
+    if not parts or len(parts) > 3:
+        return 0
+    seconds = 0
+    for piece in parts:
+        seconds = seconds * 60 + piece
+    return seconds
+
+
+def parse_lockups(data: dict, short: bool = False) -> list[dict]:
+    entries = []
+    seen = set()
+    for lockup in _walk_lockups(data):
+        if lockup.get("contentType") not in (None, "LOCKUP_CONTENT_TYPE_VIDEO"):
+            continue
+        video_id = str(lockup.get("contentId") or "")
+        if not re.fullmatch(r"[\w-]{11}", video_id) or video_id in seen:
+            continue
+        seen.add(video_id)
+        meta = (lockup.get("metadata") or {}).get("lockupMetadataViewModel") or {}
+        title = ((meta.get("title") or {}).get("content") or "").strip()
+        if not title:
+            continue
+        parts = _meta_parts(lockup)
+        badges = _badge_texts(lockup)
+        views = 0
+        published = 0
+        author = ""
+        for part in parts:
+            if _polish_views(part):
+                views = _polish_views(part)
+            elif _polish_time_ms(part):
+                published = _polish_time_ms(part)
+            elif not author:
+                author = part
+        duration = _duration_seconds(badges[0] if badges else "")
+        badge_blob = " ".join(badges).lower()
+        entries.append({
+            "title": title,
+            "url": "https://www.youtube.com/watch?v=" + video_id,
+            "publishedMs": published,
+            "excerpt": "",
+            "author": author,
+            "thumb": "",
+            "views": views,
+            "short": short or (0 < duration <= 60),
+            "videoId": video_id,
+            "liveBadge": badge_blob,
+        })
+    return entries
+
+
 def youtube_thumb(video_id: str) -> str:
     vid = (video_id or "").strip()
     if not re.fullmatch(r"[\w-]{11}", vid):
@@ -549,76 +734,69 @@ def item_from_yt(source_id: str, kind: str, raw: dict) -> dict:
     }
 
 
-def fetch_youtube_channel(spec: dict) -> tuple[str, dict]:
-    url = youtube_rss_url(spec["channel_id"])
-    final, body, err = safe_get(url, timeout=10)
-    if err or not body:
-        return spec["id"], {"ok": False, "error": err or "empty", "items": []}
+def _yt_from_browse(browse_id: str, params: str = "", short: bool = False) -> list[dict]:
     try:
-        entries = parse_atom_entries(body)
-    except ET.ParseError as exc:
-        return spec["id"], {"ok": False, "error": str(exc), "items": []}
-    items = [item_from_yt(spec["id"], "video", e) for e in entries]
+        data = youtube_browse(browse_id, params)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        return []
+    return parse_lockups(data, short=short)[:15]
+
+
+def fetch_youtube_channel(spec: dict) -> tuple[str, dict]:
+    entries = _yt_from_browse(spec["channel_id"], YT_VIDEOS_PARAMS)
+    if not entries:
+        final, body, err = safe_get(youtube_rss_url(spec["channel_id"]), timeout=10)
+        if not err and body:
+            try:
+                entries = parse_atom_entries(body)
+            except ET.ParseError:
+                entries = []
+    if not entries:
+        return spec["id"], {"ok": False, "error": "no videos", "items": []}
+    items = [item_from_yt(spec["id"], "video", entry) for entry in entries]
     return spec["id"], {"ok": True, "items": items, "url": spec["url"]}
 
 
 def fetch_guest_playlist(spec: dict) -> tuple[str, dict]:
-    url = playlist_rss_url(spec["playlist_id"])
-    final, body, err = safe_get(url, timeout=10)
-    if err or not body:
-        return spec["id"], {"ok": False, "error": err or "empty", "items": []}
-    try:
-        entries = parse_atom_entries(body)
-    except ET.ParseError as exc:
-        return spec["id"], {"ok": False, "error": str(exc), "items": []}
-    items = [item_from_yt(spec["id"], "guest", e) for e in entries]
+    entries = _yt_from_browse("VL" + spec["playlist_id"])
+    if not entries:
+        final, body, err = safe_get(playlist_rss_url(spec["playlist_id"]), timeout=10)
+        if not err and body:
+            try:
+                entries = parse_atom_entries(body)
+            except ET.ParseError:
+                entries = []
+    if not entries:
+        return spec["id"], {"ok": False, "error": "no videos", "items": []}
+    items = [item_from_yt(spec["id"], "guest", entry) for entry in entries]
     return spec["id"], {"ok": True, "items": items, "url": spec["url"]}
 
 
 def check_live(spec: dict) -> dict | None:
-    handle = spec.get("handle")
-    if not handle:
+    channel_id = spec.get("channel_id")
+    if not channel_id:
         return None
-    url = f"https://www.youtube.com/@{handle}/live"
-    final, body, err = safe_get(url, timeout=8, browser=True)
-    if err or not body:
-        return None
-    video_id = ""
-    if final:
-        m = re.search(r"[?&]v=([\w-]{11})", final)
-        if m:
-            video_id = m.group(1)
-    if not video_id:
-        m = re.search(r'rel="canonical" href="https://www\.youtube\.com/watch\?v=([\w-]{11})"', body)
-        if m:
-            video_id = m.group(1)
-    if not video_id:
-        return None
-    compact = body.replace(" ", "")
-    is_live = '"isLive":true' in compact or '"isLiveNow":true' in compact
-    is_upcoming = '"isUpcoming":true' in compact
-    if not is_live and not is_upcoming:
-        return None
-    title = ""
-    tm = re.search(r'"videoDetails"\s*:\s*\{[^{}]{0,800}?"title"\s*:\s*"((?:\\.|[^"\\])*)"', body)
-    if tm:
-        title = tm.group(1).encode("utf-8").decode("unicode_escape")
-    if not title:
-        og = re.search(r'<meta property="og:title" content="([^"]+)"', body)
-        title = unescape(og.group(1)) if og else spec["label"]
-    return {
-        "id": f"live:{spec['id']}:{video_id}",
-        "source": spec["id"],
-        "kind": "live" if is_live else "upcoming",
-        "title": title,
-        "url": "https://www.youtube.com/watch?v=" + video_id,
-        "publishedMs": now_ms(),
-        "author": spec["label"],
-        "thumb": cache_media(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"),
-        "views": 0,
-        "excerpt": "",
-        "live": is_live,
-    }
+    for entry in _yt_from_browse(channel_id, YT_LIVE_PARAMS):
+        badge = entry.get("liveBadge") or ""
+        is_live = "na żywo" in badge or "live" in badge
+        is_upcoming = "wkrótce" in badge or "upcoming" in badge
+        if not is_live and not is_upcoming:
+            continue
+        video_id = entry["videoId"]
+        return {
+            "id": f"live:{spec['id']}:{video_id}",
+            "source": spec["id"],
+            "kind": "live" if is_live else "upcoming",
+            "title": entry["title"],
+            "url": entry["url"],
+            "publishedMs": entry.get("publishedMs") or now_ms(),
+            "author": spec["label"],
+            "thumb": cache_media(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"),
+            "views": entry.get("views") or 0,
+            "excerpt": "",
+            "live": is_live,
+        }
+    return None
 
 
 def parse_patronite(html: str) -> dict:

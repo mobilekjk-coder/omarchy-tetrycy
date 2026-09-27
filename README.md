@@ -44,7 +44,7 @@ No API keys. Cache files under `~/.local/state/omarchy/kjk.tetrycy/` are created
 
 | Source | How |
 |---|---|
-| [Tetrycy](https://www.youtube.com/@Tetrycy) | Public YouTube RSS |
+| [Tetrycy](https://www.youtube.com/@Tetrycy) | YouTube's public channel browse (RSS is only a fallback; YouTube currently answers it with 404/500) |
 | [Tetrycy Forte](https://www.youtube.com/@TetrycyForte) | Public YouTube RSS |
 | [Betclic x Tetrycy](https://www.youtube.com/playlist?list=PLtVXfLwhcMZLRH3LrqET_EdHU6HCnHOwX) | Playlist RSS |
 | Live | `youtube.com/@handle/live` |
