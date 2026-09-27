@@ -648,7 +648,7 @@ def _polish_time_ms(text: str) -> int:
         seconds = count * 3600
     elif unit.startswith("dzie") or unit == "dni":
         seconds = count * 86400
-    elif unit.startswith("tydz"):
+    elif unit.startswith("ty"):
         seconds = count * 7 * 86400
     elif unit.startswith("mies"):
         seconds = count * 30 * 86400
