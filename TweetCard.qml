@@ -68,6 +68,7 @@ Item {
             width: parent.width
 
             Text {
+              textFormat: Text.PlainText
               text: root.modelData.authorName || root.modelData.author || ""
               color: root.foreground
               font.family: root.fontFamily
@@ -77,6 +78,7 @@ Item {
             }
 
             Text {
+              textFormat: Text.PlainText
               text: Model.formatAgo(root.modelData.publishedMs, root.nowMs)
               color: root.muted
               font.family: root.fontFamily
@@ -85,6 +87,7 @@ Item {
           }
 
           Text {
+            textFormat: Text.PlainText
             text: root.modelData.handle ? ("@" + root.modelData.handle) : ""
             color: root.muted
             font.family: root.fontFamily
@@ -94,6 +97,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         text: root.modelData.title || ""
         color: root.foreground
@@ -121,18 +125,21 @@ Item {
         visible: (root.modelData.likes || 0) + (root.modelData.retweets || 0) + (root.modelData.replies || 0) > 0
 
         Text {
+          textFormat: Text.PlainText
           text: Model.formatNumber(root.modelData.replies) + " odp."
           color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
         Text {
+          textFormat: Text.PlainText
           text: Model.formatNumber(root.modelData.retweets) + " RT"
           color: root.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
         Text {
+          textFormat: Text.PlainText
           text: Model.formatNumber(root.modelData.likes) + " ♥"
           color: root.muted
           font.family: root.fontFamily

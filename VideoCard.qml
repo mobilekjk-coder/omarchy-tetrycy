@@ -43,6 +43,7 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         text: root.modelData.title || ""
         color: root.foreground
@@ -54,6 +55,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         text: Model.sourceBadge(root.modelData) + " · " + Model.formatAgo(root.modelData.publishedMs, root.nowMs)
           + (root.modelData.views ? (" · " + Model.formatViews(root.modelData.views) + " wyśw.") : "")
@@ -83,6 +85,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       width: parent.width
       text: root.modelData.title || ""
       color: root.foreground
@@ -94,6 +97,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       width: parent.width
       text: Model.formatAgo(root.modelData.publishedMs, root.nowMs)
         + (root.modelData.views ? (" · " + Model.formatViews(root.modelData.views) + " wyśw.") : "")

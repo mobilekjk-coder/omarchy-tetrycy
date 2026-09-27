@@ -449,6 +449,7 @@ Item {
               spacing: Style.space(10)
 
               Text {
+                textFormat: Text.PlainText
                 text: root.patronLink.title
                 color: root.foreground
                 font.family: root.fontFamily
@@ -462,6 +463,7 @@ Item {
               }
 
               Text {
+                textFormat: Text.PlainText
                 visible: root.patronLine !== ""
                 text: root.patronLine
                 color: root.muted
@@ -473,6 +475,7 @@ Item {
                 model: root.links
 
                 Text {
+                  textFormat: Text.PlainText
                   required property var modelData
                   text: modelData.title
                   color: root.foreground
